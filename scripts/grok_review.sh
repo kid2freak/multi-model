@@ -14,6 +14,14 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GROK_BIN="${GROK_BIN:-$HOME/.grok/bin/grok}"
 MODEL="${GROK_MODEL:-grok-4.6}"
+# Windows: `python3` may be the Microsoft Store redirector stub (exits 49, prints nothing); prefer a real interpreter.
+PY="${PYTHON:-}"
+if [[ -z "$PY" ]]; then
+  for c in python3 python; do
+    if "$c" -c "import sys" >/dev/null 2>&1; then PY="$c"; break; fi
+  done
+fi
+[[ -n "$PY" ]] || { echo "no working python3/python on PATH (set PYTHON=...)" >&2; exit 2; }
 
 role=""; files=(); context=""; effort="medium"; web=0; raw=0
 while [[ $# -gt 0 ]]; do
@@ -52,7 +60,7 @@ if [[ $web -eq 1 ]]; then args+=(--tools "web_search,web_fetch"); else args+=(--
 
 out="$("$GROK_BIN" "${args[@]}" 2>/tmp/grok_review.err)" || { echo "grok failed:" >&2; cat /tmp/grok_review.err >&2; exit 1; }
 if [[ $raw -eq 1 ]]; then echo "$out"; exit 0; fi
-python3 - "$out" <<'PY'
+"$PY" - "$out" <<'PY'
 import json, sys
 d = json.loads(sys.argv[1])
 so = d.get("structuredOutput")

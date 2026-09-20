@@ -23,7 +23,7 @@ Prerequisites on every machine:
 
 | Need | macOS | Windows |
 |---|---|---|
-| `TYPESAFE_API_KEY` | `export` in `~/.zshrc` (judge.py also reads it from there) | User environment variable (System Properties → Environment Variables), or `setx TYPESAFE_API_KEY "..."`; restart the terminal |
+| `TYPESAFE_API_KEY` | `export` in `~/.zshrc` (judge.py also reads it from there) | User environment variable (System Properties → Environment Variables), or `setx TYPESAFE_API_KEY "..."`; restart the terminal. judge.py also falls back to `~/.bashrc` / `~/.bash_profile` / `~/.profile` |
 | grok CLI | `~/.grok/bin/grok`, logged in | install Grok Build, log in, then either put `grok` on `PATH` or set `GROK_BIN` to its full path |
 | bash | built-in (3.2 is fine) | Git Bash (ships with Git for Windows); Claude Code on Windows already uses it |
 | Python 3.9+ | built-in | python.org / winget; `pip install pypdf` for `pdf_text.py` |
@@ -31,7 +31,7 @@ Prerequisites on every machine:
 
 Then `claude plugin validate ~/.claude/skills/multi-model` and `/reload-plugins`.
 
-Windows notes: `grok_review.sh` writes a temp file to `/tmp` (Git Bash maps it); paths inside the skills use `~/.claude/skills/multi-model/…` which Git Bash resolves. Run artifacts go to `~/.multi-model/runs/`, outside the repo.
+Windows notes: if `python3` is the Microsoft Store redirector stub (prints nothing, exit 49), disable it under Settings → Apps → App execution aliases or run the skills' `python3 …` commands with `python`; `grok_review.sh` detects a working interpreter itself (`PYTHON=` overrides). `grok_review.sh` writes a temp file to `/tmp` (Git Bash maps it); paths inside the skills use `~/.claude/skills/multi-model/…` which Git Bash resolves. Run artifacts go to `~/.multi-model/runs/`, outside the repo.
 
 ## Sync
 

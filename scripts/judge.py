@@ -31,16 +31,26 @@ THRESHOLDS = {
 }
 
 
+# Shell profiles searched (in order) when TYPESAFE_API_KEY is not in the environment.
+# macOS: ~/.zshrc. Windows/Git Bash: ~/.bashrc, ~/.bash_profile, ~/.profile.
+_PROFILE_FILES = ("~/.zshrc", "~/.bashrc", "~/.bash_profile", "~/.profile")
+_KEY_RE = re.compile(r'''^\s*(?:export\s+)?TYPESAFE_API_KEY\s*=\s*["']?([^"'\s#]+)''', re.M)
+
+
 def _api_key():
     key = os.environ.get("TYPESAFE_API_KEY")
     if key:
         return key
-    zshrc = os.path.expanduser("~/.zshrc")
-    if os.path.exists(zshrc):
-        m = re.search(r'^export TYPESAFE_API_KEY=["\']?([^"\'\s]+)', open(zshrc).read(), re.M)
+    for name in _PROFILE_FILES:
+        path = os.path.expanduser(name)
+        if not os.path.isfile(path):
+            continue
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            m = _KEY_RE.search(f.read())
         if m:
             return m.group(1)
-    sys.exit("TYPESAFE_API_KEY not set (env or ~/.zshrc)")
+    sys.exit("TYPESAFE_API_KEY not set (env, or `export TYPESAFE_API_KEY=...` in one of: "
+             + ", ".join(_PROFILE_FILES) + ")")
 
 
 def _load(arg):
