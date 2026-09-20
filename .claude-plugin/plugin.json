@@ -1,0 +1,13 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "multi-model",
+  "version": "0.1.0",
+  "description": "Multi-model workflow: Claude produces, Grok adversarially reviews, TypeSafe routes and gates",
+  "author": {
+    "name": "kid2freak",
+    "email": "htianyi997@gmail.com"
+  },
+  "skills": [
+    "./"
+  ]
+}

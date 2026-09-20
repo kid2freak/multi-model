@@ -1,0 +1,11 @@
+{"type":"object","properties":{
+ "verdict":{"type":"string","enum":["sound","flawed"]},
+ "summary":{"type":"string"},
+ "findings":{"type":"array","items":{"type":"object","properties":{
+   "severity":{"type":"string","enum":["critical","major","minor","nit"]},
+   "location":{"type":"string"},
+   "issue":{"type":"string"},
+   "counterexample":{"type":"string"},
+   "suggestion":{"type":"string"}},
+   "required":["severity","location","issue","counterexample","suggestion"]}}},
+ "required":["verdict","summary","findings"]}
