@@ -1,10 +1,11 @@
 # multi-model
 
 Claude Code plugin: **Claude produces, Grok 4.6 adversarially reviews, TypeSafe Jev routes and gates.**
-Three pipelines — `leetcode-explain`, `general`, `paper-review` — sharing two scripts:
+Four pipelines — `leetcode-explain`, `general`, `paper-review`, `ue5` (Windows + Unreal Engine 5.8; `cpp` sub-mode live, see `PLAN-ue5.md`) — sharing these scripts:
 
 - `scripts/judge.py` — TypeSafe wrapper (presets `route`, `findings`, `gate-leetcode`, `gate-general`, `gate-paper`; thresholds in code)
-- `scripts/grok_review.sh` — grok CLI headless wrapper (roles `challenger`, `critic`, `reviewer`, `researcher`; JSON-schema output)
+- `scripts/grok_review.sh` — grok CLI headless wrapper (roles `challenger`, `critic`, `reviewer`, `researcher`, `ue_reviewer`; JSON-schema output)
+- `scripts/ue_env.sh` / `ue_build.sh` / `ue_test.sh` — Unreal: resolve engine from `.uproject`, build with UBT → `build.json`, run Automation tests headlessly → `test.json` (ue5 line only)
 
 See `SKILL.md` for the contract and `EVAL.md` for measured results.
 
@@ -27,6 +28,7 @@ Prerequisites on every machine:
 | grok CLI | `~/.grok/bin/grok`, logged in | install Grok Build, log in, then either put `grok` on `PATH` or set `GROK_BIN` to its full path |
 | bash | built-in (3.2 is fine) | Git Bash (ships with Git for Windows); Claude Code on Windows already uses it |
 | Python 3.9+ | built-in | python.org / winget; `pip install pypdf` for `pdf_text.py` |
+| Unreal (ue5 line) | — | Launcher build of UE 5.8 + Visual Studio with C++ workload; the project's `EngineAssociation` must resolve via `LauncherInstalled.dat` (or set `UE_ENGINE_ROOT`) |
 | Third-party bases | `git clone https://github.com/karanb192/algo-sensei ~/.claude/skills/algo-sensei` · `claude plugin marketplace add Imbad0202/academic-research-skills && claude plugin install academic-research-skills` | same commands |
 
 Then `claude plugin validate ~/.claude/skills/multi-model` and `/reload-plugins`.

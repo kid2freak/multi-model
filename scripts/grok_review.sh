@@ -60,7 +60,7 @@ if [[ $web -eq 1 ]]; then args+=(--tools "web_search,web_fetch"); else args+=(--
 
 out="$("$GROK_BIN" "${args[@]}" 2>/tmp/grok_review.err)" || { echo "grok failed:" >&2; cat /tmp/grok_review.err >&2; exit 1; }
 if [[ $raw -eq 1 ]]; then echo "$out"; exit 0; fi
-"$PY" - "$out" <<'PY'
+PYTHONIOENCODING=utf-8 "$PY" - "$out" <<'PY'   # Windows stdout defaults to the ANSI code page
 import json, sys
 d = json.loads(sys.argv[1])
 so = d.get("structuredOutput")

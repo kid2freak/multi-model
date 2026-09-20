@@ -5,6 +5,7 @@ Usage:
   judge.py --preset route     --state '{"request": "..."}'
   judge.py --preset findings  --state @state.json      # {"artifact": "...", "findings": [...]}
   judge.py --preset gate-leetcode|gate-general|gate-paper --state @state.json
+  judge.py --preset gate-ue5-cpp --state @state.json   # {"task","acceptance","diff","build","tests","open_findings","networked"}
   judge.py --questions @questions.json --state @state.json   # raw pass-through
   echo '{"request": "..."}' | judge.py --preset route --state -
 
@@ -57,7 +58,7 @@ def _load(arg):
     if arg == "-":
         return json.load(sys.stdin)
     if arg.startswith("@"):
-        with open(arg[1:]) as f:
+        with open(arg[1:], encoding="utf-8") as f:   # explicit: Windows defaults to the ANSI code page
             return json.load(f)
     return json.loads(arg)
 
@@ -88,7 +89,21 @@ def q_route(state):
             "criteria": {
                 "leetcode": "Explaining, solving, or reviewing an algorithm / data-structure / coding-interview problem",
                 "paper": "Reading, summarizing, reviewing, translating or writing an academic paper, thesis, or formal report",
+                "ue5": "Work inside an Unreal Engine 5 project: gameplay C++ (UCLASS/UPROPERTY/AActor/UActorComponent/GAS), Blueprints, materials/shaders/rendering, or engine performance profiling; mentions of .uproject, UE5, Unreal, 蓝图, 虚幻",
                 "general": "Anything else: scripts, plugins, tools, prose editing, planning, Q&A",
+            },
+        },
+        "ue_mode": {
+            "type": "choice",
+            "instructions": {
+                "question": "If `request` is Unreal Engine work, which ue5 sub-mode fits best? (Ignored for non-Unreal requests; pick cpp then.)",
+                "focus": "The artifact the user wants changed or explained",
+            },
+            "criteria": {
+                "cpp": "C++ classes, components, subsystems, gameplay logic, networking, tests",
+                "blueprint": "Explaining, reviewing, changing or migrating a Blueprint graph",
+                "render": "Materials, shaders (.usf/.ush), RDG passes, post-process, Nanite/Lumen/lighting settings",
+                "perf": "Frame time, hitches, memory, load time: profiling, diagnosing, optimizing",
             },
         },
         "needs_web": {
@@ -256,12 +271,93 @@ def q_gate_paper(state):
     return qs
 
 
+def q_gate_ue5_cpp(state):
+    qs = {
+        "reflection_correct": {
+            "type": "noul",
+            "instructions": {
+                "question": "Does `diff` violate an Unreal reflection or GC rule?",
+                "inspect": ["diff"],
+                "criteria": {
+                    "true": "Any of: a UObject-derived member (raw pointer or TObjectPtr) without UPROPERTY; a UCLASS/USTRUCT/UENUM without GENERATED_BODY; a UFUNCTION specifier that does not match its use (Server/Client/NetMulticast without _Implementation/_Validate, BlueprintCallable on an unsupported signature); UPROPERTY on an unsupported type; a delegate not declared with the delegate macros",
+                    "false": "None of those violations is present",
+                },
+            },
+        },
+        "lifecycle_correct": {
+            "type": "noul",
+            "instructions": {
+                "question": "Does `diff` contain a lifecycle or ownership mistake?",
+                "inspect": ["diff"],
+                "criteria": {
+                    "true": "Any of: an overridden BeginPlay/EndPlay/Tick/InitializeComponent omits Super; a timer or delegate bound in BeginPlay/Initialize is never cleared in EndPlay/Uninitialize; a UObject pointer is dereferenced without a validity check; a constructor touches the World; CreateDefaultSubobject outside a constructor; Tick left enabled with an empty Tick",
+                    "false": "None of those mistakes is present. Rules that do not apply (no timers, no Tick, no pointers) count as satisfied",
+                },
+            },
+        },
+        "no_editor_only_leak": {
+            "type": "noul",
+            "instructions": {
+                "question": "Does `diff` use editor-only API (UnrealEd, editor subsystems, WITH_EDITOR-only headers) in a runtime code path without a #if WITH_EDITOR / WITH_EDITORONLY_DATA guard?",
+                "inspect": ["diff"],
+            },
+        },
+        "findings_resolved": {
+            "type": "noul",
+            "instructions": {
+                "question": "Are all items in `open_findings` resolved in `diff`?",
+                "note": "If `open_findings` is empty, answer yes.",
+            },
+        },
+        "scope_respected": {
+            "type": "noul",
+            "instructions": "Does `diff` stay within the scope of `task` and `acceptance`, without unrequested additions or omissions?",
+        },
+        "test_adequacy": {
+            "type": "score",
+            "instructions": {
+                "question": "How well do the Automation tests in `tests` (see `tests.tests[].path`) plus any tests in `diff` cover the behavior `task` asks for?",
+                "inspect": ["task", "acceptance", "diff", "tests"],
+            },
+            "criteria": [
+                "No test exercises the new/changed behavior",
+                "Smoke test only: constructs the object or calls the main entry point once",
+                "Main branches of the requested behavior are asserted",
+                "Main branches plus edge cases (zero/negative/overflow, repeated calls, invalid input) are asserted",
+            ],
+        },
+        "readiness": {
+            "type": "score",
+            "instructions": "How ready is `diff` to hand to the user as the final answer to `task`, given `build` and `tests`?",
+            "criteria": [
+                "Not usable: wrong direction or major gaps",
+                "Draft: right direction, needs another revision",
+                "Usable: minor polish only",
+                "Deliverable as-is",
+            ],
+        },
+    }
+    if state.get("networked"):
+        qs["replication_consistent"] = {
+            "type": "noul",
+            "instructions": {
+                "question": "Does `diff` contain a network replication mistake?",
+                "criteria": {
+                    "true": "Any of: a Replicated UPROPERTY missing from GetLifetimeReplicatedProps; ReplicatedUsing naming a missing OnRep; an RPC without Server/Client/NetMulticast or with an unconsidered Reliable/Unreliable choice; a server-only mutation without an authority check; bReplicates/SetIsReplicatedByDefault not set on the owning actor/component",
+                    "false": "None of those mistakes is present",
+                },
+            },
+        }
+    return qs
+
+
 PRESETS = {
     "route": q_route,
     "findings": q_findings,
     "gate-leetcode": q_gate_leetcode,
     "gate-general": q_gate_general,
     "gate-paper": q_gate_paper,
+    "gate-ue5-cpp": q_gate_ue5_cpp,
 }
 
 # ---------------------------------------------------------------- decisions (policy in code)
@@ -281,6 +377,7 @@ def decide(preset, answers, state, th):
             "needs_code_run": answers["needs_code_run"]["noul"] >= 0.5,
             "has_acceptance": answers["has_acceptance"]["noul"] >= 0.5,
             "clarify_first": answers["clarity"]["score"] < 1.0,
+            "ue_mode": answers["ue_mode"]["choice"] if r["choice"] == "ue5" else None,
         }
     if preset == "findings":
         kept, dropped = [], []
@@ -303,12 +400,27 @@ def decide(preset, answers, state, th):
             bad = [k for k in ("overclaiming", "logic_gaps") if blocking.get(k, 0) >= 0.5]
             unsupported = [k for k, p in blocking.items() if k.startswith("supported_") and p < th["gate_pass"]]
             failed = bad + unsupported
+        if preset.startswith("gate-ue5-"):
+            # defect questions are inverted (yes == bad): fail when the model is at least unsure
+            bad = [k for k in ("reflection_correct", "lifecycle_correct", "no_editor_only_leak", "replication_consistent")
+                   if k in blocking and blocking[k] >= 1 - th["gate_pass"]]
+            ok = [k for k, p in blocking.items() if k in ("findings_resolved", "scope_respected") and p < th["gate_pass"]]
+            failed = bad + ok
+        evidence = {}
+        if preset.startswith("gate-ue5-"):
+            # Hard evidence is checked in code, never by the model: ue_build.sh / ue_test.sh outputs in state.
+            b, t = state.get("build") or {}, state.get("tests") or {}
+            evidence["build_ok"] = b.get("result") == "Succeeded" and not b.get("errors")
+            evidence["tests_ok"] = t.get("result") == "Passed" and (t.get("total") or 0) > 0
+            failed += [k for k, ok in evidence.items() if not ok]
         return {"pass": not failed and not low, "failed_checks": failed, "low_scores": low,
-                "checks": blocking, "scores": scores}
+                "checks": blocking, "scores": scores, **({"evidence": evidence} if evidence else {})}
     return {}
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")   # ensure_ascii=False output must not depend on the console code page
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--preset", choices=PRESETS.keys())
     ap.add_argument("--questions", help="raw questions JSON, @file, or -")

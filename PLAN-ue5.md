@@ -1,6 +1,6 @@
 # PLAN-ue5 — 第四条流水线：Unreal Engine 5
 
-状态：**M0 完成（见文末结论）**，等待确认后进 M1。
+状态：**M0、M1 完成（见文末结论）**；下一步 M2（blueprint）。
 适用机器：Windows 11 / UE 5.8.2 Launcher 版（见 M0）。Mac 上没有 UE，本线只在 Windows 机器上跑。
 
 ## 0. 目标与范围
@@ -210,3 +210,26 @@
 - Tavily：`SKILL.md` 说未配置；本会话里有 `tavily` MCP server 在连，M1 时确认可用后接进 `general`/`ue5` 的 research 步。
 - Epic 官方插件安装要走 `/plugin install …@claude-plugins-official`（M5 才需要）。
 - 已按推荐值假定：引擎 5.8.2、验证工程 Kurodemo、`UE_BUILD_TIMEOUT=600s`、目标 Win64 Editor。不同意请在 M1 开始前改这里。
+
+---
+
+## M1 结论（2026-09-21）
+
+交付：`skills/ue5/SKILL.md`、`scripts/ue_env.sh`、`scripts/ue_build.sh`、`scripts/ue_test.sh`、`scripts/roles/ue_reviewer.md`、`judge.py`（`route` 增 `ue5` + `ue_mode`，`gate-ue5-cpp`，硬证据 `evidence.build_ok/tests_ok` 在代码里判）、根 `SKILL.md` 路由、README、EVAL #7/#7b/#8。
+
+验收（Kurodemo，`UHealthComponent` + 4 个 Automation 测试）：
+- 正样本：v1 被 Grok 抓到两个**真实且未预埋**的问题（`IsNearlyEqual` 吞掉最后一击；测试没绑 `OnDeath`），修后门禁通过（readiness .95）。
+- 负样本（预埋 `TObjectPtr<UObject>` 无 `UPROPERTY`）：编译/测试全绿，Grok critical（p .82 保留），门禁 `reflection_correct` .44 → 拦下。
+- 路由：三条 UE 请求全部 `ue5`（置信 1.0），`ue_mode` 分别 cpp/blueprint/perf；非 UE 请求仍 `general`。
+
+实现中确定的规则（已写进脚本/skill）：
+- `ue_build.sh`：两个陈旧 makefile 守卫（"up to date 但 Source 更新" → `-NoUBTMakefiles` 重跑；C1083 指向已删除 .cpp → 重跑）；日志按 UTF-8→cp936 回退解码；退出码 0/1/124。
+- `ue_test.sh`：结论只看 `report/index.json`；`found == 0` 记为 `NoTests`（失败）；默认 `-nullrhi`，`--rhi` 可关。
+- 门禁问题改成"反问缺陷"（yes == 有缺陷），在 `1 - gate_pass` 处判失败；原先"规则都遵守了吗"的问法在正确代码上只有 .61，会误拦。§3 表中 cpp 行的题目语义按此理解。
+- Windows：`python3` 空壳、stdout 代码页（`judge.py` 强制 UTF-8 输出，`@file` 按 UTF-8 读；`grok_review.sh` 设 `PYTHONIOENCODING`）。**MSYS 路径不要写进 `python -c` 字符串**，用参数传或 `cygpath -w`。
+- 测试放 `Private/Tests/`，反射类型必须在头文件里（UHT 不处理 .cpp 里的 UCLASS）。
+
+未做 / 留给后面：
+- `replication_consistent` 题只在 `networked: true` 时出现，尚无联网样本验证（M4）。
+- Kurodemo 里的 `HealthComponent` 夹具留在工程里未提交（`Source/Kurodemo/Public|Private`），副本在 `~/.multi-model/runs/ue5/Kurodemo/m1-health/`；要清可以直接删。
+- `TYPESAFE_API_KEY` 用户环境变量在 M1 开始时仍未生效（User/Machine/注册表/所有 profile 都没有），本轮仍从 key 文件注入。

@@ -19,3 +19,19 @@ Observations
 - Grok input is always ~24k tokens (CLI overhead); reviews cost $0.02–0.03. Researcher with web is ~20× that.
 - Both "unplanned" catches (#4 symlink, #5 dimension mismatch) came from Grok, i.e. from the model that did not write the artifact — the cross-model effect the design bets on.
 - Not yet measured: Claude-only baseline on the same cases; long real PDFs through the critic; Windows/UE5 line (out of scope on this Mac).
+
+## 2026-09-21 — ue5 line, M1 (`cpp` sub-mode; Windows, UE 5.8.2, grok-4.6 effort medium, jev-1.13.0)
+
+Project: `E:\ProgramSoftware\UE_Project\Kurodemo`. Runs: `~/.multi-model/runs/ue5/Kurodemo/m1-health*/`. Fixture kept in the run dir (`Public/`, `Private/`).
+
+| # | Case | Planted defect | Build / Tests | Grok | TypeSafe filter | Gate (gate-ue5-cpp) | Result |
+|---|------|----------------|---------------|------|-----------------|---------------------|--------|
+| 7 | UHealthComponent v1 (ApplyDamage/Heal/OnDeath + 2 tests) | none intended | ✓ 12.5 s (8 actions) / ✓ 2/2, 16 s | 2 findings, **both real and unplanned**: `IsNearlyEqual` short-circuit swallows the final hit when Health < 1e-4 (concrete repro); tests never bind `OnDeath`, so "broadcast once" was unverified. 77 s, $0.026 | kept 2 (p .86/.77) | not run (blocking findings) | ✅ cross-model catch |
+| 7b | v2: exact compare + 2 delegate-counting tests | none | ✓ 8.7 s / ✓ 4/4, 19 s | — | — | **PASS**: defect probs .16/.11/.03, findings_resolved .98, scope .89, test_adequacy 1.0, readiness .95; evidence build_ok/tests_ok true (code) | ✅ |
+| 8 | v2 + `TObjectPtr<UObject> LastInstigator` **without UPROPERTY** | GC dangling reference; build and tests stay green | ✓ / ✓ 4/4 | critical (missing UPROPERTY, GC repro) + minor (unrequested scope). 63 s, $0.024 | kept 1 (p .82), dropped the scope nit (p .34) | **FAIL** on `reflection_correct` p_defect .44 ≥ .25 (gate run without fixing, to test the gate alone) | ✅ blocked twice over |
+
+Observations
+- The gate's Unreal defect questions are inverted (yes == defect) and fail at `p ≥ 1 - gate_pass` (.25); the first phrasing ("are the rules followed?" with a list of N/A rules) sat at .61 on correct code and would have blocked it — question design matters more than the threshold.
+- Build/test evidence never goes through the model: `decision.evidence` is computed from `build.json` / `test.json` in `judge.py`.
+- Whole cpp round on this machine: build ~10–50 s incremental, tests ~20 s, Grok ~60–80 s, TypeSafe ~2 s → ≈ 2–3 min per review round.
+- Blueprint / render / perf sub-modes: not yet (M2/M3).

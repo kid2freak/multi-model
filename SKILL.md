@@ -1,6 +1,6 @@
 ---
 name: multi-model
-description: Entry point for the multi-model workflow (Claude produces, Grok adversarially reviews, TypeSafe routes and gates). Use when the user asks to run "多模型工作流" / "multi-model" on a task, or for any request that should be routed between leetcode-explain, paper-review and general. Also read when writing or debugging those skills.
+description: Entry point for the multi-model workflow (Claude produces, Grok adversarially reviews, TypeSafe routes and gates). Use when the user asks to run "多模型工作流" / "multi-model" on a task, or for any request that should be routed between leetcode-explain, paper-review, ue5 and general. Also read when writing or debugging those skills.
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit
 ---
@@ -17,13 +17,15 @@ Roles (never swap them):
 ```bash
 python3 ~/.claude/skills/multi-model/scripts/judge.py --preset route --state '{"request": "<user request verbatim>"}'
 ```
-`decision.workflow` → `leetcode` → skill `leetcode-explain`; `paper` → `paper-review`; `general` → `general`; `ask_user` → ask one clarifying question with the two most likely workflows.
+`decision.workflow` → `leetcode` → skill `leetcode-explain`; `paper` → `paper-review`; `ue5` → `ue5` (carry `decision.ue_mode`: cpp/blueprint/render/perf); `general` → `general`; `ask_user` → ask one clarifying question with the two most likely workflows.
 `clarify_first == true` → ask once before starting. Carry `needs_web` and `needs_code_run` into the chosen skill.
 
 ## Skills
 - `skills/leetcode-explain/SKILL.md`
 - `skills/general/SKILL.md`
 - `skills/paper-review/SKILL.md`
+- `skills/ue5/SKILL.md` (Windows + UE 5.8; `cpp` sub-mode live, others per `PLAN-ue5.md`)
 
 ## Shared contract
+Python: the skills write `python3`; on Windows where `python3` is the Microsoft Store stub (prints nothing, exit 49) use `python` instead — the shell scripts detect this themselves.
 Every skill ends with an audit line: `审查：Grok 提出 N 条 → TypeSafe 保留 K 条 → 门禁 通过/未通过 → 成本 $X`. Artifacts live under `~/.multi-model/runs/<workflow>/<slug>/`. Thresholds are in `judge.py THRESHOLDS`; change them there, not in prompts.
