@@ -8,10 +8,10 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep
 # ue5
 
 Pipeline: **clarify → locate project → produce → build → test → Grok review → TypeSafe filter → revise → TypeSafe gate → deliver**.
-Scripts: `~/.claude/skills/multi-model/scripts/` — `ue_env.sh`, `ue_build.sh`, `ue_test.sh`, `ue_bp_export.sh` (+ `ue_bp_export.py`, `ue_t3d_parse.py`), `judge.py`, `grok_review.sh`.
+Scripts: `~/.claude/skills/multi-model/scripts/` — `ue_env.sh`, `ue_build.sh`, `ue_test.sh`, `ue_bp_export.sh` (+ `ue_bp_export.py`, `ue_t3d_parse.py`), `ue_perf_capture.sh` (+ `ue_csv_summary.py`), `ue_render_check.sh` (+ `ue_material_stats.py`), `judge.py`, `grok_review.sh`.
 Workdir: `~/.multi-model/runs/ue5/<Project>/<slug>/` (`task.md`, `diff.patch`, `build.json`, `test.json`, `bp/`, `findings.json`, `filtered.json`, `gate.json`). The user's project files are the artifact; never copy the project into the workdir.
 
-Status: **`cpp` (M1) and `blueprint` (M2) sub-modes are implemented.** `render` and `perf` are planned (`PLAN-ue5.md` M3); if the router picks one of them, say so and run the `cpp` pipeline for the C++ parts, or fall back to `general` for pure explanation.
+Status: all four sub-modes are implemented — `cpp` (M1, steps 2–8), `blueprint` (M2, section B), `perf` (M3, section P), `render` (M3, section R). Evaluation and threshold tuning continue in M4/M5 (`PLAN-ue5.md`).
 
 Python: use `$PY` from `ue_env.sh` (on this Windows box `python3` is the Store stub; `python` is the real one).
 
@@ -81,6 +81,38 @@ B5. **Gate**: `state_gate.json` = `{"task", "acceptance", "graph": <bp.md text>,
 `$PY scripts/judge.py --preset gate-ue5-blueprint --state @state_gate.json > gate.json`
 Blocking: `graph_misrepresented` (≥ `bp_fidelity_max`), `migration_complete`, `findings_resolved`, `readiness`, and the code-checked `evidence.bp_compiles` / `evidence.export_complete`. `unrequested_scope` / `tick_heavy_work` only produce `warnings` — mention them in the delivery, do not loop on them.
 B6. Deliver with the audit line; cite the export (`bp.md` path) so the user can check the pseudo-code themselves. Changes to a graph are delivered as an exact node-level change list (event → pin → node → argument); this pipeline never edits `.uasset` files.
+
+## P. Perf sub-mode (`ue_mode == perf`)
+The artifact is a diagnosis (bottleneck hypothesis backed by numbers) or an optimization (diagnosis + change + before/after). Every number comes from a CSV Profiler capture made by the script; never from `stat unit` screenshots or memory.
+
+P1. **Baseline** (before touching anything):
+```bash
+~/.claude/skills/multi-model/scripts/ue_perf_capture.sh "$UE_PROJECT" --map /Game/Path/Map --label baseline --out <workdir>/perf-baseline
+```
+Standalone `-game`, real RHI, windowed 1280x720, 900 frames from boot; the first 120 (engine init + map load) are dropped, hitches (> 4× median) are counted separately. `perf.json` has p50/p95/max per thread (`FrameTime`, `GameThreadTime`, `RenderThreadTime`, `GPUTime`, `RHIThreadTime`), `top_gamethread` exclusive stats, `ticks` per class, draw calls, memory. ~25 s. Read the bottleneck off the data: FrameTime ≈ RenderThreadTime ≈ GPUTime ⇒ GPU-bound; GameThreadTime ≈ FrameTime with `EventWait` small ⇒ game-thread-bound; `hitches.count > 0` ⇒ look at `top_gamethread` spikes (GC, streaming, spawning).
+P2. **Produce**: `artifact.md` = hypothesis (which thread/stat, with the p50 numbers), the change (C++ via the cpp steps 2–4 when code changes; asset/cvar/setting changes otherwise, stated exactly), expected effect. `artifact_kind: diagnosis` if the task only asks why.
+P3. **After** (same map, same resolution, back to back, nothing else running):
+```bash
+~/.claude/skills/multi-model/scripts/ue_perf_capture.sh "$UE_PROJECT" --map /Game/Path/Map --label after --compare <workdir>/perf-baseline/perf.json --out <workdir>/perf-after
+```
+`perf.json.compare.metrics[*].verdict` is computed in code (`better/worse/same` vs a noise band of max(1.5×IQR, 3%)); quote those verdicts and the p50 deltas in `artifact.md`, do not restate the numbers by hand.
+P4. **Review**: `scripts/grok_review.sh --role ue_perf_analyst --context @task.md --file artifact.md --file perf-baseline/perf.json --file perf-after/perf.json [--file diff.patch] > findings.json`.
+P5. **Filter** as in step 6 (`artifact` = artifact text + both perf.json texts).
+P6. **Gate**: `state_gate.json` = `{"task", "acceptance", "artifact", "baseline": <baseline perf.json>, "after": <after perf.json or null>, "open_findings", "artifact_kind": "diagnosis|optimization", ["diff", "build", "tests"]}`
+`$PY scripts/judge.py --preset gate-ue5-perf --state @state_gate.json > gate.json`
+Code-checked evidence: `baseline_captured` (≥ 100 usable frames); for optimizations also `same_conditions` and `improvement_real` (`compare.verdict == better`). Model: `hypothesis_supported` (score ≥ `hypothesis_min`), `numbers_misquoted` (blocking), cpp defect questions when a `diff` is present, `readiness`. If `improvement_real` is false the change did not beat the noise — say so; do not re-run captures until one looks better.
+
+## R. Render sub-mode (`ue_mode == render`)
+The artifact is a material/shader/RDG change (diff and/or exact asset-level change list) or an explanation of rendering cost. Evidence is a real shader compile.
+
+R1. **Check** (before and, for changes, after):
+```bash
+~/.claude/skills/multi-model/scripts/ue_render_check.sh "$UE_PROJECT" --asset /Game/Path/M_Foo [--asset ...] [--compare <baseline>/render.json] --out <workdir>/render
+```
+Headless editor commandlet with `-AllowCommandletRendering` (D3D12 SM6 here): recompiles each material, records `statistics` (pixel/vertex instruction counts, samplers, texture samples), material domain/blend mode/shading model, and every `LogShaderCompilers`/`LogMaterial` error — including "Failed to compile Material" (the engine logs it as a *warning*; the script counts it as an error and marks the asset `compile_failed`). No `--asset` → only the startup/global shader compile is checked (for `.usf`/`.ush` edits; pair with `ue_build.sh` for C++ shader bindings). First run on a project can take minutes (DDC fill); afterwards ~15–40 s. `render.json.result` must be `Passed`; with `--compare`, `compare.materials[*].verdict` is `better/worse/same/broken` by pixel instructions and texture samples.
+R2. **Produce**: `artifact.md` states the change, the measured cost before/after from `render.json` (quote, do not estimate), and side effects of any blend-mode/shading-model/domain change (Nanite, Lumen, translucency sorting, depth). C++ shader/RDG code goes through the cpp steps 2–4.
+R3. **Review**: `scripts/grok_review.sh --role ue_reviewer --context @task.md --file artifact.md --file render/render.json [--file diff.patch --file build.json] > findings.json`.
+R4. **Filter** as in step 6. R5. **Gate**: `state_gate.json` = `{"task", "acceptance", "artifact", "render": <render.json>, "open_findings", ["diff", "build", "tests"]}` → `--preset gate-ue5-render`. Code-checked: `shader_compiles`. Blocking model questions: `render_defect`, `findings_resolved`, `readiness`; `cost_unreported` and `unrequested_scope` only warn. Hedging and process notes in the artifact lower `readiness` — state facts and numbers, not what you would do next.
 
 ## 9. Deliver
 The diff (file list + what changed), the exact build/test commands the user can replay (from `build.json.command` / `test.json.command`), then the audit line:

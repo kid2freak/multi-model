@@ -52,3 +52,25 @@ Observations
 - `graph_misrepresented` separates cleanly (.22–.24 vs .96) but the clean cases sit right above the cpp defect cutoff (.25), so the blueprint family got its own threshold `bp_fidelity_max = .5` in `THRESHOLDS`; cpp keeps `cpp_defect_max = .25` (the planted missing-UPROPERTY scored .35–.44 across runs — margin is thin, revisit in M4).
 - A generic "scope respected?" question was noisy on explanations (.53–.68 on correct ones, both phrasings) — it is now `unrequested_scope`, warn-only (≥ .5), with omissions covered by `graph_misrepresented`.
 - The gate is a compile + coverage check plus one fidelity question; Grok is the one that finds *which* line is wrong. Round cost ≈ 25 s export + 50–60 s Grok + 2 s TypeSafe.
+
+## 2026-09-21 — ue5 line, M3 (`perf` + `render` sub-modes; Windows, UE 5.8.2 D3D12 SM6, Radeon 780M, grok-4.6 effort medium, jev-1.13.0)
+
+Project: `BpProbe` (ThirdPerson template). Runs: `~/.multi-model/runs/ue5/BpProbe/m3-*/`.
+
+Evidence capture: `ue_perf_capture.sh` = standalone `-game -windowed 1280x720 -csvCaptureFrames=600 -ExitAfterCsvProfiling -csvGpuStats`, 21–29 s per run, 480 usable frames after a 120-frame warm-up, 0 hitches; `r.ScreenPercentage 200` as a synthetic regression moved FrameTime p50 8.5 → 21.4 ms (code verdict `worse`, +152%), `r.ScreenPercentage 50` moved GPU −36% but FrameTime only −11% (inside the noise band → `same`; overall `mixed`). `ue_render_check.sh` = `-run=pythonscript -AllowCommandletRendering` (without that flag `MaterialEditingLibrary.get_statistics` returns all zeros): M_PrototypeGrid 232 ps / 148 vs / 2 samplers, M_SimpleGlow 158 / 339 / 2; 2.5 min on a cold DDC, 15–40 s warm. A material with a broken Custom-HLSL node is only logged by the engine as a *warning* ("Failed to compile Material … Default Material will be used") plus DXC error lines — both are now counted as errors.
+
+| # | Mode | Case | Planted defect | Evidence (code) | Grok | TypeSafe filter | Gate | Result |
+|---|------|------|----------------|-----------------|------|-----------------|------|--------|
+| 11 | perf | "frame time 21 ms, find the bottleneck and fix it": GPU-bound diagnosis, ScreenPercentage 200→100, numbers quoted from perf.json | none | baseline_captured ✓ same_conditions ✓ improvement_real ✓ (FrameTime −60%) | `sound`, 95 s, $0.031 | — | hypothesis_supported .95, numbers_misquoted .12, **readiness .69–.70** (3 runs: .69/.70/.70) → borderline PASS | ⚠ passes at the edge; the "change" is a capture cvar, not a project fix, and the judge discounts it |
+| 12 | perf | blames GameThread Tick, raises ScreenPercentage to 200, claims −7% and `verdict = better` | wrong thread, inverted change, invented numbers | improvement_real ✗ (FrameTime +152%) | `flawed`, 5 findings (all 3 planted + "disabling Tick changes behavior" + "global cvar when per-asset asked"), 58 s, $0.026 | kept 5/5 (.83–.89) | **FAIL**: numbers_misquoted .98, hypothesis .03, readiness .00 | ✅ blocked |
+| 12b | perf | #11 with `baseline = null` | missing baseline | baseline_captured ✗ | — | — | **FAIL** on evidence | ✅ |
+| 13 | render | explain M_SimpleGlow cost from render.json (v1) | none intended | shader_compiles ✓ | `flawed`, 3 findings: extrapolated the Opaque cost from a different material (real), omitted `num_pixel_texture_samples` (real), attributed the vertex cost to Two-Sided (unverifiable) — 30 s, $0.020 | kept 3/3 (.77–.85) | PASS anyway (readiness .88; findings were not in `open_findings`) | ✅ Grok catches what the gate cannot |
+| 13b | render | v2 revised with hedges and "run the tool again" notes | — | ✓ | — | — | readiness **.65**, unrequested_scope .60 warn → FAIL | ✅ hedging penalized (documented in SKILL R5) |
+| 13c | render | v3: facts + numbers only, no extrapolation | — | ✓ | — | — | **PASS** readiness .91, render_defect .11, cost_unreported .12 | ✅ |
+| 14 | render | broken Custom-HLSL material presented as "compiles, 158→0 instructions" | compile failure hidden, invented numbers | shader_compiles ✗ (2 shader errors, `compile_failed`) | `flawed`, 5 findings, 63 s, $0.050 (56k input: render.json is big) | — | **FAIL**: render_defect .78, readiness .00 | ✅ blocked twice over |
+
+Observations
+- Perf and render gates lean on code-checked evidence (`improvement_real`, `same_conditions`, `shader_compiles`); the model questions add "did the text match the data" (`numbers_misquoted` .12 vs .98) and separate cleanly.
+- `readiness` sits at .69–.70 for a correct-but-thin perf artifact; not tuned (threshold stays .7) — M4 should use a real code change as the positive perf case.
+- `judge.py` now retries transient network errors 3× (the local proxy dropped two calls during this run).
+- Cost per round: perf ≈ 25 s × 2 captures + 60–95 s Grok; render ≈ 15–40 s check + 30–60 s Grok; TypeSafe 2–3 s.

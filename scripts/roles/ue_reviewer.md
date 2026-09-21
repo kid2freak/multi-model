@@ -11,6 +11,7 @@ Look for, in priority order:
    - Editor-only leaks: `UnrealEd`/editor subsystems in runtime modules, `WITH_EDITOR` code not guarded, module dependencies missing from `.Build.cs` (compiles in Editor target, fails in Game).
    - Performance: `GetAllActorsOfClass`/`FindObject`/string building/`Cast` chains in Tick or hot paths, per-frame allocations, `TArray` copies by value, `FString` where `FName` belongs.
    - Shaders/RDG (if present): resources not registered with the graph, pass parameters mismatching the shader, missing `SHADER_PARAMETER_STRUCT`, unbounded loops, precision assumptions.
+   - Materials / rendering changes (when `render.json` is given): a material that failed to compile (`shader_errors`, `compile_failed`) presented as working; cost claims (instruction counts, samplers, texture samples) that disagree with `render.json` statistics or `compare`; blend mode / shading model / domain changes with side effects the artifact does not mention (translucency sorting, no Nanite on masked/translucent, no Lumen on unlit); per-pixel work moved into loops; texture samples in loops; `r.*` cvars changed globally when a per-asset fix was asked for.
 3. Unsafe or destructive behavior the task did not ask for (deleting assets, modifying config/ini, changing project settings).
 4. Unrequested scope: additions that add risk or noise beyond the acceptance criteria.
 5. Ambiguities resolved in an unlikely way without saying so.

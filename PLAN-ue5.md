@@ -1,6 +1,6 @@
 # PLAN-ue5 — 第四条流水线：Unreal Engine 5
 
-状态：**M0、M1、M2 完成（见文末结论）**；下一步 M3（render + perf）。
+状态：**M0–M3 完成（见文末结论）**，四个子模式都能跑；下一步 M4（eval）。
 适用机器：Windows 11 / UE 5.8.2 Launcher 版（见 M0）。Mac 上没有 UE，本线只在 Windows 机器上跑。
 
 ## 0. 目标与范围
@@ -255,3 +255,22 @@
 - 真实剪贴板文本只用模拟样本验证过（格式来自 `FEdGraphUtilities::ExportNodesToText` 源码），M4 补一次编辑器里 Ctrl+C 的实测。
 - 未覆盖的节点类型（Timeline 曲线值、Delay、MakeArray、Interface 消息、Sequencer/AnimBP/Widget 专用图）只会按类名兜底显示；AnimBP/UMG/Material 图未测。
 - `migration_complete` 题没有真实迁移样本（M4）。
+
+---
+
+## M3 结论（2026-09-21）
+
+交付：`scripts/ue_perf_capture.sh` + `scripts/ue_csv_summary.py`（perf 取证与代码判定的对比）、`scripts/ue_render_check.sh` + `scripts/ue_material_stats.py`（着色器编译 + 材质统计）、`scripts/roles/ue_perf_analyst.md`、`ue_reviewer.md` 增材质/渲染段、`judge.py` `gate-ue5-perf` / `gate-ue5-render`（cpp 缺陷题抽成 `_q_cpp_defects()` 复用；`THRESHOLDS` 增 `hypothesis_min=.6`；网络错误重试 3 次）、`skills/ue5/SKILL.md` P/R 两节、EVAL #11–#14。
+
+取证方式（spike 结论）：
+- **perf**：`UnrealEditor-Cmd <proj> <map> -game -windowed -ResX/-ResY -csvCaptureFrames=N -ExitAfterCsvProfiling -csvGpuStats`，真实 RHI；CSV 在 `%LOCALAPPDATA%/UnrealEngine/5.8/Saved/Profiling/CSV/`，从日志 `Writing CSV to file :` 取路径。CSV 首行是表头，末尾重复表头 + `[Key],value` 元数据；字段超过 131072 字节要抬 `csv.field_size_limit`。前 120 帧是引擎初始化和加载图，必须丢；对比规则在 `ue_csv_summary.py`：噪声带 = max(1.5×IQR_base, 3% p50)，逐线程 better/worse/same，总判 better/worse/mixed/same。
+- **render**：`-run=pythonscript` 必须加 **`-AllowCommandletRendering`**，否则材质资源不创建、`get_statistics` 全 0；`get_statistics` 内部会 `FinishCompilation`，所以不需要自己等。材质编译失败引擎只报 Warning（"Failed to compile Material … Default Material will be used"）+ DXC 风格 `Material.ush:LINE:COL: error:`，脚本把两者都算 error 并给资产打 `compile_failed`。
+- 两个子模式都不改工程：perf 的对比用命令行 cvar / 代码改动；render 只读材质（改动由用户或 cpp 线落地后再跑 `--compare`）。
+
+门禁：perf 的 `baseline_captured / same_conditions / improvement_real` 和 render 的 `shader_compiles` 全在代码里；模型题 `numbers_misquoted`、`render_defect` 按 `bp_fidelity_max` / `cpp_defect_max` 阻断，`hypothesis_supported` 按 `hypothesis_min`，`cost_unreported` 只警告。
+
+未做 / 留给后面：
+- perf 正样本的 readiness 贴着 .7（改动只是 cvar），M4 用真实代码改动做正样本；`stat` 级别的 GPU pass 分解（`ProfileGPU`/Insights）没接，只有 CSV 的线程级 + `Exclusive/GameThread/*`。
+- render 只覆盖材质/材质实例；`.usf/.ush` 全局着色器只靠启动期编译日志，没有单独的 spike；RDG/C++ 改动走 cpp 线的编译。
+- `-game` 采样窗口会弹出来（不是 nullrhi），采样期间机器不能干别的。
+- ue_reviewer 一次 render 审查吃了 56k 输入 token（render.json 里 shader_warnings/materials 全量）；M4 考虑给 Grok 只传精简版。

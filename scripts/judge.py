@@ -8,6 +8,9 @@ Usage:
   judge.py --preset gate-ue5-cpp --state @state.json   # {"task","acceptance","diff","build","tests","open_findings","networked"}
   judge.py --preset gate-ue5-blueprint --state @state.json   # {"task","acceptance","graph","artifact","export","open_findings",
                                                             #  "artifact_kind": explanation|review|change_plan|migration, ["build","tests"]}
+  judge.py --preset gate-ue5-perf --state @state.json        # {"task","acceptance","artifact","baseline","after","open_findings",
+                                                            #  "artifact_kind": diagnosis|optimization, ["diff","build","tests"]}
+  judge.py --preset gate-ue5-render --state @state.json      # {"task","acceptance","artifact","render","open_findings", ["diff","build","tests"]}
   judge.py --questions @questions.json --state @state.json   # raw pass-through
   echo '{"request": "..."}' | judge.py --preset route --state -
 
@@ -20,6 +23,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -33,6 +37,7 @@ THRESHOLDS = {
     "readiness_pass": 0.7,         # normalized Score (0..1) required to deliver
     "cpp_defect_max": 0.25,        # gate-ue5-cpp: inverted defect Nouls (yes == defect) block at/above this
     "bp_fidelity_max": 0.5,        # gate-ue5-blueprint: graph_misrepresented / migration_complete block at/above this
+    "hypothesis_min": 0.6,         # gate-ue5-perf: normalized hypothesis_supported score required (2 of 3 levels)
 }
 
 
@@ -73,11 +78,17 @@ def ask(state, questions):
         API_URL, data=body,
         headers={"Authorization": f"Bearer {_api_key()}", "Content-Type": "application/json"},
     )
-    try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            return json.load(r)
-    except urllib.error.HTTPError as e:
-        sys.exit(f"TypeSafe HTTP {e.code}: {e.read().decode()[:500]}")
+    last = None
+    for attempt in range(3):   # transient network errors (local proxy hiccups, 10060 timeouts) are retried
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return json.load(r)
+        except urllib.error.HTTPError as e:
+            sys.exit(f"TypeSafe HTTP {e.code}: {e.read().decode()[:500]}")
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            last = e
+            time.sleep(2 * (attempt + 1))
+    sys.exit(f"TypeSafe unreachable after 3 attempts: {last}")
 
 
 # ---------------------------------------------------------------- presets
@@ -275,8 +286,8 @@ def q_gate_paper(state):
     return qs
 
 
-def q_gate_ue5_cpp(state):
-    qs = {
+def _q_cpp_defects():
+    return {
         "reflection_correct": {
             "type": "noul",
             "instructions": {
@@ -306,6 +317,12 @@ def q_gate_ue5_cpp(state):
                 "inspect": ["diff"],
             },
         },
+    }
+
+
+def q_gate_ue5_cpp(state):
+    qs = _q_cpp_defects()
+    qs.update({
         "findings_resolved": {
             "type": "noul",
             "instructions": {
@@ -340,7 +357,7 @@ def q_gate_ue5_cpp(state):
                 "Deliverable as-is",
             ],
         },
-    }
+    })
     if state.get("networked"):
         qs["replication_consistent"] = {
             "type": "noul",
@@ -423,6 +440,101 @@ def q_gate_ue5_blueprint(state):
     return qs
 
 
+def _readiness(what):
+    return {
+        "type": "score",
+        "instructions": f"How ready is `artifact` ({what}) to hand to the user as the final answer to `task`?",
+        "criteria": [
+            "Not usable: wrong direction or major gaps",
+            "Draft: right direction, needs another revision",
+            "Usable: minor polish only",
+            "Deliverable as-is",
+        ],
+    }
+
+
+def _findings_resolved(where):
+    return {
+        "type": "noul",
+        "instructions": {
+            "question": f"Are all items in `open_findings` resolved in `{where}`?",
+            "note": "If `open_findings` is empty, answer yes.",
+        },
+    }
+
+
+def _unrequested_scope():
+    return {
+        "type": "noul",
+        "instructions": {"question": "Does `artifact` (and `diff`, if present) contain material that `task` did not ask for?"},
+        "criteria": {
+            "true": "Advice, refactors, extra features or commentary beyond what `task` and `acceptance` request",
+            "false": "Everything serves a requested item",
+        },
+    }
+
+
+def q_gate_ue5_perf(state):
+    kind = state.get("artifact_kind", "diagnosis")
+    qs = {
+        "hypothesis_supported": {
+            "type": "score",
+            "instructions": {
+                "question": "Is the bottleneck hypothesis in `artifact` supported by the profiler data in `baseline` (thread p50 times, `top_gamethread`, `ticks`, `hitches`) and, if present, `after.compare`?",
+                "inspect": ["artifact", "baseline", "after"],
+            },
+            "criteria": [
+                "Contradicted: the data points at a different thread or stat",
+                "Unsupported: plausible but the cited numbers are not in the data",
+                "Supported: the named thread/stat dominates in the data",
+                "Supported and quantified: the artifact cites the actual numbers and the delta after the change",
+            ],
+        },
+        "numbers_misquoted": {
+            "type": "noul",
+            "instructions": {
+                "question": "Does `artifact` state a measurement that disagrees with `baseline` / `after` (frame or thread times, percentages, hitch counts)?",
+                "criteria": {"true": "A quoted number or direction of change is not what the data says", "false": "Every quoted number matches the data within rounding"},
+            },
+        },
+        "findings_resolved": _findings_resolved("artifact"),
+        "unrequested_scope": _unrequested_scope(),
+        "readiness": _readiness(f"a {kind}"),
+    }
+    if state.get("diff"):
+        qs.update(_q_cpp_defects())
+    return qs
+
+
+def q_gate_ue5_render(state):
+    qs = {
+        "render_defect": {
+            "type": "noul",
+            "instructions": {
+                "question": "Does `artifact` (or `diff`) contain a rendering mistake?",
+                "inspect": ["artifact", "diff", "render"],
+                "criteria": {
+                    "true": "Any of: an RDG resource used without being registered or a pass whose parameters do not match its shader; a missing SHADER_PARAMETER_STRUCT / IMPLEMENT_GLOBAL_SHADER; an unbounded per-pixel loop or dynamic branching on a divergent value in a hot pass; a translucent/masked blend mode chosen where opaque was required (or the reverse), breaking sorting, Nanite, or Lumen; texture samples inside a loop; precision assumptions (half where float is needed); a material domain/shading model that cannot express the requested effect",
+                    "false": "None of those mistakes is present",
+                },
+            },
+        },
+        "cost_unreported": {
+            "type": "noul",
+            "instructions": {
+                "question": "Does `artifact` fail to report the shader cost change (pixel/vertex instruction counts, samplers, texture samples) that `render.compare` measured, or report numbers that disagree with it?",
+                "criteria": {"true": "No cost statement, or a statement contradicting `render`", "false": "The cost change is stated and matches `render`, or no comparison was requested"},
+            },
+        },
+        "findings_resolved": _findings_resolved("artifact"),
+        "unrequested_scope": _unrequested_scope(),
+        "readiness": _readiness("a rendering change or explanation"),
+    }
+    if state.get("diff"):
+        qs.update(_q_cpp_defects())
+    return qs
+
+
 PRESETS = {
     "route": q_route,
     "findings": q_findings,
@@ -431,6 +543,8 @@ PRESETS = {
     "gate-paper": q_gate_paper,
     "gate-ue5-cpp": q_gate_ue5_cpp,
     "gate-ue5-blueprint": q_gate_ue5_blueprint,
+    "gate-ue5-perf": q_gate_ue5_perf,
+    "gate-ue5-render": q_gate_ue5_render,
 }
 
 # ---------------------------------------------------------------- decisions (policy in code)
@@ -467,7 +581,7 @@ def decide(preset, answers, state, th):
         blocking = {k: v["noul"] for k, v in answers.items() if v["type"] == "noul"}
         scores = {k: round(_norm_score(v), 2) for k, v in answers.items() if v["type"] == "score"}
         failed = [k for k, p in blocking.items() if p < th["gate_pass"]]
-        low = [k for k, s in scores.items() if s < th["readiness_pass"]]
+        low = [k for k, s in scores.items() if s < (th["hypothesis_min"] if k == "hypothesis_supported" else th["readiness_pass"])]
         # paper gate: per-claim checks are informative; only overclaiming/logic_gaps block (inverted: yes == bad)
         if preset == "gate-paper":
             bad = [k for k in ("overclaiming", "logic_gaps") if blocking.get(k, 0) >= 0.5]
@@ -476,9 +590,9 @@ def decide(preset, answers, state, th):
         if preset.startswith("gate-ue5-"):
             # defect questions are inverted (yes == bad): fail when the model is at least unsure
             # inverted defect questions (yes == defect) block at their family threshold; soft ones only warn at p >= 0.5
-            cpp_defects = ("reflection_correct", "lifecycle_correct", "no_editor_only_leak", "replication_consistent")
-            bp_defects = ("graph_misrepresented", "migration_complete")
-            soft_qs = ("unrequested_scope", "tick_heavy_work")
+            cpp_defects = ("reflection_correct", "lifecycle_correct", "no_editor_only_leak", "replication_consistent", "render_defect")
+            bp_defects = ("graph_misrepresented", "migration_complete", "numbers_misquoted")
+            soft_qs = ("unrequested_scope", "tick_heavy_work", "cost_unreported")
             bad = [k for k in cpp_defects if k in blocking and blocking[k] >= th["cpp_defect_max"]]
             bad += [k for k in bp_defects if k in blocking and blocking[k] >= th["bp_fidelity_max"]]
             ok = [k for k, p in blocking.items() if k in ("findings_resolved", "scope_respected") and p < th["gate_pass"]]
@@ -496,6 +610,16 @@ def decide(preset, answers, state, th):
                 assets = (e or {}).get("assets") or []
                 evidence["bp_compiles"] = bool(assets) and all((a.get("compile") or {}).get("status") in ("BS_UP_TO_DATE", "BS_UP_TO_DATE_WITH_WARNINGS") for a in assets)
                 evidence["export_complete"] = bool(assets) and all(not a.get("errors") and not (a.get("coverage") or {}).get("unreached") for a in assets)
+            if preset == "gate-ue5-perf":
+                base, after = state.get("baseline") or {}, state.get("after") or {}
+                evidence["baseline_captured"] = base.get("result") == "Passed" and (base.get("frames_used") or 0) >= 100
+                if state.get("artifact_kind", "diagnosis") == "optimization":
+                    cmp_ = after.get("compare") or {}
+                    evidence["same_conditions"] = bool(cmp_) and cmp_.get("same_conditions", False) and after.get("map") == base.get("map") and after.get("resolution") == base.get("resolution")
+                    evidence["improvement_real"] = cmp_.get("verdict") == "better"
+            if preset == "gate-ue5-render":
+                r = state.get("render") or {}
+                evidence["shader_compiles"] = r.get("result") == "Passed" and not r.get("shader_errors")
             failed += [k for k, ok in evidence.items() if not ok]
         return {"pass": not failed and not low, "failed_checks": failed, "low_scores": low,
                 "checks": blocking, "scores": scores,
