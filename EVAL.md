@@ -35,3 +35,20 @@ Observations
 - Build/test evidence never goes through the model: `decision.evidence` is computed from `build.json` / `test.json` in `judge.py`.
 - Whole cpp round on this machine: build ~10–50 s incremental, tests ~20 s, Grok ~60–80 s, TypeSafe ~2 s → ≈ 2–3 min per review round.
 - Blueprint / render / perf sub-modes: not yet (M2/M3).
+
+## 2026-09-21 — ue5 line, M2 (`blueprint` sub-mode; Windows, UE 5.8.2, grok-4.6 effort medium, jev-1.13.0)
+
+Project: the disposable `BpProbe` (ThirdPerson template + shared content) at `~/.multi-model/runs/ue5/m0/BpProbe`. Runs: `~/.multi-model/runs/ue5/BpProbe/m2-*/`.
+
+Export fidelity (`ue_bp_export.sh` → `ue_t3d_parse.py`), 6 template Blueprints: every graph compiled `BS_UP_TO_DATE`, exec coverage 22/22, 49/49, 9/9, 4/4, 16/16, 1/1 (no unreached exec node); the ThirdPerson character's 8 event chains are all rendered including `IA_Jump.Started → Jump / Completed → StopJumping` (Epic's own DSL had rendered 3/8 in M0). Timelines (`→ Update:`), Sequence, Branch (`→ true/false`), validated gets (`→ Is Valid`), macros (`IsValid → Is Valid`), casts (`AsCharacter`), split struct pins (`ReturnValue_Yaw`) and comment boxes all survive. Simulated clipboard text (flat node list, the Ctrl+C format) parses with the same code path.
+
+| # | Case | Planted defect | Export | Grok (`ue_bp_reviewer`) | TypeSafe filter | Gate (gate-ue5-blueprint) | Result |
+|---|------|----------------|--------|-------------------------|-----------------|---------------------------|--------|
+| 9 | Explain BP_ThirdPersonCharacter, faithful v1 (1532 chars) | none | compile ✓, coverage 22/22 | `sound`, 0 findings, 62 s, $0.024 | — | **PASS**: graph_misrepresented .23, readiness .75, warnings: none (unrequested_scope .46 < .5) | ✅ |
+| 9b | same, compact v2 (914 chars) | none | same | — | — | **PASS**: graph_misrepresented .24, readiness .71 | ✅ |
+| 10 | Explanation that drops `Started/Completed`, invents `Event Tick`, calls Move's rotation "full Control Rotation" | 3 planted | same | `flawed`, 5 findings: the 3 planted **+ 2 unplanned real** (touch-jump events omitted; UserConstructionScript never mentioned). 49 s, $0.023 | kept 5/5 (p .81–.94) | **FAIL**: graph_misrepresented .96, readiness .22 | ✅ blocked |
+
+Observations
+- `graph_misrepresented` separates cleanly (.22–.24 vs .96) but the clean cases sit right above the cpp defect cutoff (.25), so the blueprint family got its own threshold `bp_fidelity_max = .5` in `THRESHOLDS`; cpp keeps `cpp_defect_max = .25` (the planted missing-UPROPERTY scored .35–.44 across runs — margin is thin, revisit in M4).
+- A generic "scope respected?" question was noisy on explanations (.53–.68 on correct ones, both phrasings) — it is now `unrequested_scope`, warn-only (≥ .5), with omissions covered by `graph_misrepresented`.
+- The gate is a compile + coverage check plus one fidelity question; Grok is the one that finds *which* line is wrong. Round cost ≈ 25 s export + 50–60 s Grok + 2 s TypeSafe.

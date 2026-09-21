@@ -8,10 +8,10 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep
 # ue5
 
 Pipeline: **clarify → locate project → produce → build → test → Grok review → TypeSafe filter → revise → TypeSafe gate → deliver**.
-Scripts: `~/.claude/skills/multi-model/scripts/` — `ue_env.sh`, `ue_build.sh`, `ue_test.sh`, `judge.py`, `grok_review.sh`.
-Workdir: `~/.multi-model/runs/ue5/<Project>/<slug>/` (`task.md`, `diff.patch`, `build.json`, `test.json`, `findings.json`, `filtered.json`, `gate.json`). The user's project files are the artifact; never copy the project into the workdir.
+Scripts: `~/.claude/skills/multi-model/scripts/` — `ue_env.sh`, `ue_build.sh`, `ue_test.sh`, `ue_bp_export.sh` (+ `ue_bp_export.py`, `ue_t3d_parse.py`), `judge.py`, `grok_review.sh`.
+Workdir: `~/.multi-model/runs/ue5/<Project>/<slug>/` (`task.md`, `diff.patch`, `build.json`, `test.json`, `bp/`, `findings.json`, `filtered.json`, `gate.json`). The user's project files are the artifact; never copy the project into the workdir.
 
-Status: **`cpp` sub-mode is implemented (M1).** `blueprint`, `render`, `perf` are planned (`PLAN-ue5.md` M2/M3); if the router picks one of them, say so and run the `cpp` pipeline only for the C++ parts, or fall back to `general` for pure explanation.
+Status: **`cpp` (M1) and `blueprint` (M2) sub-modes are implemented.** `render` and `perf` are planned (`PLAN-ue5.md` M3); if the router picks one of them, say so and run the `cpp` pipeline for the C++ parts, or fall back to `general` for pure explanation.
 
 Python: use `$PY` from `ue_env.sh` (on this Windows box `python3` is the Store stub; `python` is the real one).
 
@@ -63,6 +63,24 @@ Fix each kept finding, then **re-run steps 3–4** (a fix that does not compile 
 `$PY scripts/judge.py --preset gate-ue5-cpp --state @state_gate.json > gate.json`
 - `decision.evidence.build_ok` / `tests_ok` are computed in code from the reports; the model never decides those.
 - `pass` → deliver. Else fix `failed_checks` / `low_scores`, back to step 3. Maximum **2** Grok rounds; then deliver with a labelled "⚠ 未通过门禁" section.
+
+## B. Blueprint sub-mode (`ue_mode == blueprint`)
+The artifact is text about a graph (explanation, review, change plan) or a C++ migration; the graph itself is exported from the real asset, never guessed from screenshots or memory.
+
+B1. **Export** the Blueprint(s) named in the task (object path without the `.BP_Foo` suffix):
+```bash
+~/.claude/skills/multi-model/scripts/ue_bp_export.sh "$UE_PROJECT" --asset /Game/Path/BP_Foo [--asset ...] --out <workdir>/bp
+```
+Produces `<Name>.bp.md` (pseudo-code: one block per event/function, every exec pin followed, `→ Pin:` branches, `# comment` boxes, components and variables in the header), `<Name>.bp.json` (nodes/pins/links), `<Name>.t3d`, and `export.json` with `compile.status` (must be `BS_UP_TO_DATE`) and `coverage.unreached` (must be empty). ~20 s editor startup + <1 s per asset. If the user pasted graph text copied from the editor (Ctrl+C) instead, run `$PY scripts/ue_t3d_parse.py pasted.txt --md graph.md --json graph.json` — same format, no editor needed, but then there is no compile evidence (say so).
+Read `bp.md` before writing anything; it is the ground truth (`graph` in the gate).
+
+B2. **Produce**: explanation/review/change plan → `artifact.md`, written against `bp.md` block by block (every event, every named exec pin such as `Started/Completed`, every argument source). Migration → C++ via the cpp steps 2–4 above (build + tests are then included in the gate state).
+B3. **Review**: `scripts/grok_review.sh --role ue_bp_reviewer --context @task.md --file <workdir>/bp/<Name>.bp.md --file artifact.md > findings.json` (add `diff.patch`, `build.json`, `test.json` for migrations).
+B4. **Filter** as in step 6, with `artifact` = the artifact text followed by a `---- graph ----` separator and the `bp.md` text (so the judge can check findings against the graph).
+B5. **Gate**: `state_gate.json` = `{"task", "acceptance", "graph": <bp.md text>, "artifact": <artifact text>, "export": <export.json>, "open_findings": [...], "artifact_kind": "explanation|review|change_plan|migration", ["build", "tests" for migrations]}`
+`$PY scripts/judge.py --preset gate-ue5-blueprint --state @state_gate.json > gate.json`
+Blocking: `graph_misrepresented` (≥ `bp_fidelity_max`), `migration_complete`, `findings_resolved`, `readiness`, and the code-checked `evidence.bp_compiles` / `evidence.export_complete`. `unrequested_scope` / `tick_heavy_work` only produce `warnings` — mention them in the delivery, do not loop on them.
+B6. Deliver with the audit line; cite the export (`bp.md` path) so the user can check the pseudo-code themselves. Changes to a graph are delivered as an exact node-level change list (event → pin → node → argument); this pipeline never edits `.uasset` files.
 
 ## 9. Deliver
 The diff (file list + what changed), the exact build/test commands the user can replay (from `build.json.command` / `test.json.command`), then the audit line:

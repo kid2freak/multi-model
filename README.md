@@ -1,11 +1,11 @@
 # multi-model
 
 Claude Code plugin: **Claude produces, Grok 4.6 adversarially reviews, TypeSafe Jev routes and gates.**
-Four pipelines — `leetcode-explain`, `general`, `paper-review`, `ue5` (Windows + Unreal Engine 5.8; `cpp` sub-mode live, see `PLAN-ue5.md`) — sharing these scripts:
+Four pipelines — `leetcode-explain`, `general`, `paper-review`, `ue5` (Windows + Unreal Engine 5.8; `cpp` and `blueprint` sub-modes live, see `PLAN-ue5.md`) — sharing these scripts:
 
 - `scripts/judge.py` — TypeSafe wrapper (presets `route`, `findings`, `gate-leetcode`, `gate-general`, `gate-paper`; thresholds in code)
-- `scripts/grok_review.sh` — grok CLI headless wrapper (roles `challenger`, `critic`, `reviewer`, `researcher`, `ue_reviewer`; JSON-schema output)
-- `scripts/ue_env.sh` / `ue_build.sh` / `ue_test.sh` — Unreal: resolve engine from `.uproject`, build with UBT → `build.json`, run Automation tests headlessly → `test.json` (ue5 line only)
+- `scripts/grok_review.sh` — grok CLI headless wrapper (roles `challenger`, `critic`, `reviewer`, `researcher`, `ue_reviewer`, `ue_bp_reviewer`; JSON-schema output)
+- `scripts/ue_env.sh` / `ue_build.sh` / `ue_test.sh` — Unreal: resolve engine from `.uproject`, build with UBT → `build.json`, run Automation tests headlessly → `test.json`; `ue_bp_export.sh` + `ue_t3d_parse.py` export Blueprints to T3D and render lossless pseudo-code (also parses graph text pasted from the editor) (ue5 line only)
 
 See `SKILL.md` for the contract and `EVAL.md` for measured results.
 

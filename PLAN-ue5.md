@@ -1,6 +1,6 @@
 # PLAN-ue5 — 第四条流水线：Unreal Engine 5
 
-状态：**M0、M1 完成（见文末结论）**；下一步 M2（blueprint）。
+状态：**M0、M1、M2 完成（见文末结论）**；下一步 M3（render + perf）。
 适用机器：Windows 11 / UE 5.8.2 Launcher 版（见 M0）。Mac 上没有 UE，本线只在 Windows 机器上跑。
 
 ## 0. 目标与范围
@@ -233,3 +233,25 @@
 - `replication_consistent` 题只在 `networked: true` 时出现，尚无联网样本验证（M4）。
 - Kurodemo 里的 `HealthComponent` 夹具留在工程里未提交（`Source/Kurodemo/Public|Private`），副本在 `~/.multi-model/runs/ue5/Kurodemo/m1-health/`；要清可以直接删。
 - `TYPESAFE_API_KEY` 用户环境变量在 M1 开始时仍未生效（User/Machine/注册表/所有 profile 都没有），本轮仍从 key 文件注入。
+
+---
+
+## M2 结论（2026-09-21）
+
+交付：`scripts/ue_t3d_parse.py`（纯 Python，T3D/剪贴板 → `bp.json` + 伪代码）、`scripts/ue_bp_export.py`（编辑器内跑：T3D 导出、组件、`compile_blueprint`）、`scripts/ue_bp_export.sh`（头less 包装，`-EnablePlugins=PythonScriptPlugin`，不改 .uproject）、`scripts/roles/ue_bp_reviewer.md`、`judge.py` `gate-ue5-blueprint`（`bp_compiles`/`export_complete` 在代码里判）、`skills/ue5/SKILL.md` B 节、EVAL #9/#9b/#10。
+
+验收：6 个模板蓝图导出全部编译 `BS_UP_TO_DATE`、exec 覆盖 100%；角色蓝图 8 条事件链 8/8（M0 官方 DSL 3/8）。解释任务：正样本 Grok `sound` + 门禁通过；负样本（丢 Started/Completed、编造 Tick、说错 Move 旋转）Grok 抓到 3 个预埋 + 2 个未预埋，门禁 `graph_misrepresented` .96 拦下。
+
+实现中确定的规则：
+- T3D 里图的成员以 EdGraph 的 `Nodes(i)` 数组为准；同 outer 下的孤儿对象（split-pin 残留、宏实例幽灵、编译中间图 `ExecuteUbergraph_*`/`*_MERGED`）一律忽略并计数。
+- 伪代码规则：每个 exec 根一个块；沿**所有** exec 出口走，命名出口写成 `→ Pin:`（Branch 写 `true/false`，validated get 写 `Is Valid/Is Not Valid`）；Knot 透明；数据输入内联，纯节点递归展开（深度 12）；`Set Var = expr`、`Target.Var`、`Cast → AsX`；注释框按几何包含挂到入口块前。
+- 组件不在 T3D 里，用 `SubobjectDataSubsystem` 另取。
+- 阈值：`THRESHOLDS` 新增 `cpp_defect_max=.25`、`bp_fidelity_max=.5`（原来统一用 `1-gate_pass`）；`unrequested_scope`、`tick_heavy_work` 只进 `warnings`。
+- Git Bash 会把参数和环境变量里形如 `/Game/...` 的值改写成 Windows 路径 → 资产路径 base64 后经环境变量传给 Python。
+- `-run=pythonscript` 走 `UE_BP_EXPORT_CONFIG` 环境变量传配置；`compile_blueprint` 后状态从 `<BlueprintStatus.BS_UP_TO_DATE: 3>` 里正则取。
+
+未做 / 留给后面：
+- 只读：不改 `.uasset`。"改蓝图"交付的是节点级改动清单，或走 cpp 迁移。
+- 真实剪贴板文本只用模拟样本验证过（格式来自 `FEdGraphUtilities::ExportNodesToText` 源码），M4 补一次编辑器里 Ctrl+C 的实测。
+- 未覆盖的节点类型（Timeline 曲线值、Delay、MakeArray、Interface 消息、Sequencer/AnimBP/Widget 专用图）只会按类名兜底显示；AnimBP/UMG/Material 图未测。
+- `migration_complete` 题没有真实迁移样本（M4）。
